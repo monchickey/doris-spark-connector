@@ -42,7 +42,7 @@ abstract class DorisTableBase(identifier: Identifier, config: DorisConfig, schem
 
   override def schema(): StructType = schema.getOrElse({
     val dorisSchema = frontend.getTableSchema(identifier.namespace()(0), identifier.name())
-    dorisSchema
+    pruneSchema(dorisSchema)
   })
 
   override def capabilities(): util.Set[TableCapability] = {
@@ -73,6 +73,24 @@ abstract class DorisTableBase(identifier: Identifier, config: DorisConfig, schem
     StructType(dorisSchema.getProperties.asScala.map(field => {
       StructField(field.getName, SchemaConvertors.toCatalystType(field.getType, field.getPrecision, field.getScale))
     }))
+  }
+
+  private def pruneSchema(originSchema: StructType): StructType = {
+    if (config.contains(DorisOptions.DORIS_READ_FIELDS)) {
+      val readFields = config.getValue(DorisOptions.DORIS_READ_FIELDS)
+      if (readFields != null && !readFields.trim.equals("*")) {
+        val requiredCols = readFields.split(",").map(_.trim.replaceAll("`", "")).filter(_.nonEmpty)
+        if (requiredCols.nonEmpty) {
+          val requiredSet = requiredCols.toSet
+          val fields = originSchema.fields.filter(field => requiredSet.contains(field.name))
+          if (fields.isEmpty) {
+            throw new IllegalArgumentException("No required columns found")
+          }
+          return StructType(fields)
+        }
+      }
+    }
+    originSchema
   }
 
   protected def createScanBuilder(config: DorisConfig, schema: StructType): ScanBuilder
